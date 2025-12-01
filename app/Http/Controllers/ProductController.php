@@ -43,7 +43,7 @@ class ProductController extends Controller
 
     // 2. I-set ang User ID
     // DAHIL WALA PA TAYONG AUTHENTICATION: pansamantala, gagamitin natin ang ID ng unang user.
-    $validatedData['user_id'] = User::first()->id; 
+    $validatedData['user_id'] = auth()->id(); 
 
     // 3. I-save ang Product
     $product = Product::create($validatedData);
