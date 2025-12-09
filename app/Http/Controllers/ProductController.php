@@ -6,25 +6,51 @@ use App\Models\Product;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Http\Requests\UpdateProductRequest;
+use App\Helpers\XmlHelper;
 
 class ProductController extends Controller
 {
     /**
+     * Handle response format (JSON or XML)
+     */
+    private function formatResponse($data, $status = 200, $headers = [])
+    {
+        $request = request();
+        
+        if (XmlHelper::wantsXml($request)) {
+            return XmlHelper::toXml($data, 'response', $status, $headers);
+        }
+        
+        return response()->json($data, $status, $headers);
+    }
+
+    /**
+     * Parse request data based on content type
+     */
+    private function parseRequestData(Request $request)
+    {
+        if (XmlHelper::isXml($request)) {
+            $xmlContent = $request->getContent();
+            return XmlHelper::toArray($xmlContent);
+        }
+        
+        return $request->all();
+    }
+
+    /**
      * Display a listing of the resource.
      */
-   public function index()
-{
-    // Eager Loading: Kukunin ang lahat ng products at isasama 
-    // ang related na data mula sa 'category' at 'user' relationships.
-    $products = Product::with('category', 'user')->get(); 
-    
-    // Optional: Maaari mo ring gamitin ang paginate(10) para sa mas malaking dataset
-
-    // Ibalik ang data bilang isang JSON response
-    return response()->json([
-        'status' => 'success',
-        'products' => $products
-    ]);
+    public function index(Request $request) // ADD Request parameter
+    {
+        $products = Product::with('category', 'user')->get(); 
+        
+        return $this->formatResponse([ // CHANGE to formatResponse
+            'status' => 'success',
+            'message' => 'Products retrieved successfully',
+            'data' => [ // ADD data wrapper
+                'products' => $products
+            ]
+        ]);
     }
 
     /**
@@ -32,98 +58,108 @@ class ProductController extends Controller
      */
     public function store(Request $request)
     {
-        // 1. Validation (Tinitiyak na kumpleto at tama ang data)
-    $validatedData = $request->validate([
-        'name' => 'required|string|max:255',
-        'description' => 'nullable|string',
-        'price' => 'required|numeric|min:0',
-        // Tinitiyak na may existing na ID sa categories table
-        'category_id' => 'required|exists:categories,id', 
-    ]);
+        // Parse data based on content type (XML or JSON)
+        $requestData = $this->parseRequestData($request); // ADD this
+        $request->merge($requestData); // ADD this
+        
+        // Validation
+        $validatedData = $request->validate([
+            'name' => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'price' => 'required|numeric|min:0',
+            'category_id' => 'required|exists:categories,id', 
+        ]);
 
-    // 2. I-set ang User ID
-    // DAHIL WALA PA TAYONG AUTHENTICATION: pansamantala, gagamitin natin ang ID ng unang user.
-    $validatedData['user_id'] = auth()->id(); 
+        // Set user ID
+        $validatedData['user_id'] = auth()->id() ?? User::first()->id; // ADD fallback
 
-    // 3. I-save ang Product
-    $product = Product::create($validatedData);
+        // Create product
+        $product = Product::create($validatedData);
 
-    // 4. Magbalik ng successful JSON response
-    return response()->json([
-        'status' => 'success',
-        'message' => 'Product successfully created.',
-        'product' => $product
-    ], 201); // 201 Created Status
+        return $this->formatResponse([ // CHANGE to formatResponse
+            'status' => 'success',
+            'message' => 'Product successfully created.',
+            'data' => [ // ADD data wrapper
+                'product' => $product
+            ]
+        ], 201);
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(Product $product) // Route Model Binding
-{
-    // Awtomatikong hinanap ng Laravel ang produkto.
-    // Hindi na kailangan ang Product::find($id) o ang if check.
-
-    return response()->json([
-        'status' => 'success',
-        'product' => $product
-    ]);
+    public function show(Request $request, Product $product) // ADD Request parameter
+    {
+        // Load relationships
+        $product->load('category', 'user');
+        
+        return $this->formatResponse([ // CHANGE to formatResponse
+            'status' => 'success',
+            'message' => 'Product retrieved successfully',
+            'data' => [ // ADD data wrapper
+                'product' => $product
+            ]
+        ]);
     }
 
     /**
      * Update the specified resource in storage.
      */
-   public function update(UpdateProductRequest $request, Product $product) 
+    public function update(UpdateProductRequest $request, Product $product) 
     {
-        // --- DEBUGGING CODE START ---
+        // Parse data based on content type (XML or JSON)
+        $requestData = $this->parseRequestData($request); // ADD this
+        $request->merge($requestData); // ADD this
+        
+        // Debugging
         $loggedInUserId = auth()->id();
         $productOwnerId = $product->user_id;
-
-        // I-dump ang User IDs para makita kung pareho ba sila
-        // Gamitin ang dd() para huminto ang execution at ipakita ang output
-        // dd("Logged In User ID: " . $loggedInUserId, "Product Owner ID: " . $productOwnerId);
         
-        // Maaari mo ring i-comment ang dd() at gamitin ang log:
         \Log::info("UPDATE ATTEMPT | Logged In ID: {$loggedInUserId} | Product Owner ID: {$productOwnerId} | Product ID: {$product->id}");
-        // --- DEBUGGING CODE END ---
 
-        // 1. Authorization Check (Ito ang nagbibigay ng 403)
+        // Authorization Check
         if ($loggedInUserId !== $productOwnerId) {
-            return response()->json([
+            return $this->formatResponse([ // CHANGE to formatResponse
                 'status' => 'error',
                 'message' => 'You are not authorized to update this product.'
-            ], 403); // 403 Forbidden
+            ], 403);
         }
 
-        // 2. Validation and Update
+        // Validate using Form Request
         $validatedData = $request->validated();
         $product->fill($validatedData);
         $product->save();
 
-        // 3. Response
-        return response()->json([
+        return $this->formatResponse([ // CHANGE to formatResponse
             'status' => 'success',
             'message' => 'Product successfully updated.',
-            'product' => $product 
+            'data' => [ // ADD data wrapper
+                'product' => $product 
+            ]
         ]);
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Product $product)
-{
-    // TANDAAN: Dahil Route Model Binding (Product $product) ang ginamit,
-    // automatic na 404 Not Found ang response kung walang product na nahanap.
+    public function destroy(Request $request, Product $product) // ADD Request parameter
+    {
+        // Authorization check
+        $loggedInUserId = auth()->id();
+        $productOwnerId = $product->user_id;
+        
+        if ($loggedInUserId !== $productOwnerId) {
+            return $this->formatResponse([ // CHANGE to formatResponse
+                'status' => 'error',
+                'message' => 'You are not authorized to delete this product.'
+            ], 403);
+        }
 
-    // 1. I-delete ang Product
-    $product->delete();
+        $product->delete();
 
-    // 2. Magbalik ng successful JSON response (204 No Content ang karaniwan)
-    // Pero gagamitin natin ang 200 OK para magbigay ng message.
-    return response()->json([
-        'status' => 'success',
-        'message' => 'Product successfully deleted.'
-    ], 200);
+        return $this->formatResponse([ // CHANGE to formatResponse
+            'status' => 'success',
+            'message' => 'Product successfully deleted.'
+        ]);
     }
 }

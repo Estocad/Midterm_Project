@@ -6,14 +6,46 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use App\Helpers\XmlHelper; // ADD THIS
 
 class AuthController extends Controller
 {
+    /**
+     * Handle response format (JSON or XML)
+     */
+    private function formatResponse($data, $status = 200, $headers = [])
+    {
+        $request = request();
+        
+        if (XmlHelper::wantsXml($request)) {
+            return XmlHelper::toXml($data, 'response', $status, $headers);
+        }
+        
+        return response()->json($data, $status, $headers);
+    }
+
+    /**
+     * Parse request data based on content type
+     */
+    private function parseRequestData(Request $request)
+    {
+        if (XmlHelper::isXml($request)) {
+            $xmlContent = $request->getContent();
+            return XmlHelper::toArray($xmlContent);
+        }
+        
+        return $request->all();
+    }
+
     /**
      * Mag-register ng bagong user.
      */
     public function register(Request $request)
     {
+        // Parse data based on content type (XML or JSON)
+        $requestData = $this->parseRequestData($request);
+        $request->merge($requestData);
+        
         $validatedData = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|unique:users|max:255',
@@ -29,10 +61,13 @@ class AuthController extends Controller
         // Awtomatikong mag-generate ng token pagkatapos mag-register
         $token = $user->createToken('myapptoken')->plainTextToken;
 
-        return response()->json([
+        return $this->formatResponse([
             'status' => 'success',
-            'user' => $user,
-            'token' => $token,
+            'message' => 'User registered successfully',
+            'data' => [
+                'user' => $user,
+                'token' => $token,
+            ]
         ], 201);
     }
 
@@ -41,6 +76,10 @@ class AuthController extends Controller
      */
     public function login(Request $request)
     {
+        // Parse data based on content type (XML or JSON)
+        $requestData = $this->parseRequestData($request);
+        $request->merge($requestData);
+        
         $validatedData = $request->validate([
             'email' => 'required|string|email',
             'password' => 'required|string',
@@ -51,19 +90,22 @@ class AuthController extends Controller
 
         // I-check ang password
         if (!$user || !Hash::check($validatedData['password'], $user->password)) {
-            return response()->json([
+            return $this->formatResponse([
                 'status' => 'error',
                 'message' => 'Invalid credentials'
-            ], 401); // 401 Unauthorized
+            ], 401);
         }
 
         // Mag-generate ng bagong token
         $token = $user->createToken('myapptoken')->plainTextToken;
 
-        return response()->json([
+        return $this->formatResponse([
             'status' => 'success',
-            'user' => $user,
-            'token' => $token,
+            'message' => 'Login successful',
+            'data' => [
+                'user' => $user,
+                'token' => $token,
+            ]
         ], 200);
     }
 
@@ -72,17 +114,26 @@ class AuthController extends Controller
      */
     public function logout(Request $request)
     {
-        // 💡 ITO ANG SOLUSYON SA 401 ERROR MO SA LOGOUT:
-        // Dapat siguraduhin na ang token na ginagamit ay dine-delete.
-        // Ang 'auth:sanctum' middleware sa api.php ay nagpapares ng token, 
-        // kaya ang auth()->user() ay nagre-return ng authenticated user.
-        
-        // Burahin lang ang kasalukuyang token na ginamit sa request na ito.
+        // Burahin ang kasalukuyang token na ginamit sa request na ito.
         $request->user()->currentAccessToken()->delete(); 
 
-        return response()->json([
+        return $this->formatResponse([
             'status' => 'success',
             'message' => 'Successfully logged out.'
         ], 200);
+    }
+    
+    /**
+     * Get current authenticated user
+     */
+    public function user(Request $request)
+    {
+        return $this->formatResponse([
+            'status' => 'success',
+            'message' => 'User retrieved',
+            'data' => [
+                'user' => $request->user()
+            ]
+        ]);
     }
 }
